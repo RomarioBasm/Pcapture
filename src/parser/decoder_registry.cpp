@@ -90,8 +90,9 @@ public:
         // dispatched us — 0x8100 or 0x88a8) onto the tag so formatters can
         // distinguish C-VLAN from S-VLAN in Q-in-Q.
         tag.tpid = static_cast<std::uint16_t>(ctx.incoming_id);
-        ctx.pkt->vlan_tags.push_back(tag);
         const std::uint16_t inner_ethertype = read_be16(data + 2);
+        tag.inner_ethertype = inner_ethertype;
+        ctx.pkt->vlan_tags.push_back(tag);
         r.consumed = 4;
         r.next_id = inner_ethertype;
         r.has_next = true;

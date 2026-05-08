@@ -138,7 +138,7 @@ DecodedPacket decode(const capture::RawFrame& frame,
 
         ProtocolDecoder* next = registry.find(r.decoded_as, r.next_id);
         if (!next) {
-            // Unknown is information, not an error.
+            // Doc §8: unknown is information, not an error.
             record_unknown_layer(pkt, r.decoded_as, r.next_id,
                                  static_cast<std::size_t>(data - frame_base),
                                  remaining);

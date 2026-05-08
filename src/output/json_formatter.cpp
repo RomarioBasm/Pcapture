@@ -38,7 +38,9 @@ public:
         const auto sec = std::chrono::duration_cast<std::chrono::microseconds>(
             pkt.timestamp.time_since_epoch()).count();
 
-        out << "{\"ts_us\":" << sec
+        // "v" is the schema version. Bump only on breaking field-shape changes
+        // (renames, type changes, removals); additive changes do not bump it.
+        out << "{\"v\":1,\"ts_us\":" << sec
             << ",\"seq\":" << pkt.seq
             << ",\"caplen\":" << pkt.captured_len
             << ",\"len\":" << pkt.original_len;
