@@ -1,5 +1,7 @@
 #include "cli/config.hpp"
 
+#include "output/banner.hpp"
+
 #include <cxxopts.hpp>
 
 #include <ostream>
@@ -21,6 +23,21 @@ std::optional<BackPressure> parse_back_pressure(const std::string& s) {
     if (s == "drop-newest") return BackPressure::DropNewest;
     if (s == "drop-oldest") return BackPressure::DropOldest;
     if (s == "block")       return BackPressure::Block;
+    return std::nullopt;
+}
+
+std::optional<TimeFormat> parse_time_format(const std::string& s) {
+    if (s == "none")     return TimeFormat::None;
+    if (s == "relative") return TimeFormat::Relative;
+    if (s == "absolute") return TimeFormat::Absolute;
+    if (s == "epoch")    return TimeFormat::Epoch;
+    return std::nullopt;
+}
+
+std::optional<ColorMode> parse_color_mode(const std::string& s) {
+    if (s == "auto")   return ColorMode::Auto;
+    if (s == "always") return ColorMode::Always;
+    if (s == "never")  return ColorMode::Never;
     return std::nullopt;
 }
 
@@ -55,6 +72,25 @@ const char* to_string(BackPressure b) {
     case BackPressure::DropNewest: return "drop-newest";
     case BackPressure::DropOldest: return "drop-oldest";
     case BackPressure::Block:      return "block";
+    }
+    return "?";
+}
+
+const char* to_string(TimeFormat t) {
+    switch (t) {
+    case TimeFormat::None:     return "none";
+    case TimeFormat::Relative: return "relative";
+    case TimeFormat::Absolute: return "absolute";
+    case TimeFormat::Epoch:    return "epoch";
+    }
+    return "?";
+}
+
+const char* to_string(ColorMode c) {
+    switch (c) {
+    case ColorMode::Auto:   return "auto";
+    case ColorMode::Always: return "always";
+    case ColorMode::Never:  return "never";
     }
     return "?";
 }
@@ -130,6 +166,10 @@ cxxopts::Options build_spec() {
             cxxopts::value<int>()->default_value("100"))
         ("F,format", "Output format: human | compact | json",
             cxxopts::value<std::string>()->default_value("human"))
+        ("time", "Timestamp column for human/compact: none | relative | absolute | epoch",
+            cxxopts::value<std::string>()->default_value("relative"))
+        ("color", "Colorize human/compact output: auto | always | never (NO_COLOR honoured in auto)",
+            cxxopts::value<std::string>()->default_value("auto"))
         ("v,verbose", "Verbose multi-line output (repeat: -vv adds hex dump)",
             cxxopts::value<int>()->default_value("0")->implicit_value("1"))
         ("m,match", "Decoded-side filter predicate (key=value, repeatable). "
@@ -168,12 +208,17 @@ ParseResult parse(int argc, char** argv, std::ostream& out, std::ostream& err) {
     }
 
     if (parsed.count("help")) {
+        format::write_program_banner(out, format::no_color_palette());
         out << spec.help() << "\n";
         result.exit_code = 0;
         return result;
     }
     if (parsed.count("version")) {
-        out << kProgram << " 0.1.0\n";
+        // Logo banner doubles as the version line — colour is off here because
+        // --version is commonly piped into shell glue (`pcapture --version`).
+        // Users who want the colored banner can run `--color=always`-aware
+        // entry points like the startup banner emitted by run_threaded.
+        format::write_program_banner(out, format::no_color_palette());
         result.exit_code = 0;
         return result;
     }
@@ -209,6 +254,28 @@ ParseResult parse(int argc, char** argv, std::ostream& out, std::ostream& err) {
             << "' (expected human|compact|json)\n";
         result.exit_code = 2;
         result.errors.emplace_back("invalid --format: " + fmt_str);
+        return result;
+    }
+
+    const auto time_str = parsed["time"].as<std::string>();
+    if (auto t = parse_time_format(time_str)) {
+        cfg.time_format = *t;
+    } else {
+        err << kProgram << ": invalid --time '" << time_str
+            << "' (expected none|relative|absolute|epoch)\n";
+        result.exit_code = 2;
+        result.errors.emplace_back("invalid --time: " + time_str);
+        return result;
+    }
+
+    const auto color_str = parsed["color"].as<std::string>();
+    if (auto c = parse_color_mode(color_str)) {
+        cfg.color_mode = *c;
+    } else {
+        err << kProgram << ": invalid --color '" << color_str
+            << "' (expected auto|always|never)\n";
+        result.exit_code = 2;
+        result.errors.emplace_back("invalid --color: " + color_str);
         return result;
     }
 

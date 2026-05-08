@@ -21,6 +21,24 @@ enum class BackPressure {
     Block,
 };
 
+// How the human/compact formatters render the per-packet timestamp column.
+// JSON output is unaffected — it always emits epoch microseconds in `ts_us`.
+enum class TimeFormat {
+    None,
+    Relative,
+    Absolute,
+    Epoch,
+};
+
+// Whether terminal color escape sequences are emitted by human/compact output.
+// Auto resolves to "on" when stdout is a TTY, no --output file is set, and
+// NO_COLOR is unset; the resolution itself lives in the format::color module.
+enum class ColorMode {
+    Auto,
+    Always,
+    Never,
+};
+
 // Pacing mode for offline replay. AsFast bypasses inter-packet sleeps so
 // integration tests are deterministic; Multiplier honours wall-clock spacing
 // (scaled by `replay_speed_factor`) so a saved capture replays "naturally".
@@ -53,6 +71,13 @@ struct Config {
     int read_timeout_ms = 100;
 
     OutputFormat format = OutputFormat::Human;
+    // Default Relative: deterministic, terminal-readable, and trivial to diff
+    // across runs. Live users can switch to Absolute for wall-clock context;
+    // None disables the column (useful when piping into another formatter).
+    TimeFormat time_format = TimeFormat::Relative;
+    // Default Auto: live capture in a terminal gets color; redirected output,
+    // file sinks, and NO_COLOR-honouring environments do not.
+    ColorMode color_mode = ColorMode::Auto;
     bool verbose = false; // legacy single-flag mirror of (verbosity >= 1)
 
     std::uint64_t count = 0;     // 0 = unlimited
@@ -96,10 +121,14 @@ bool validate(const Config& cfg, std::vector<std::string>& errors);
 // Helpers exposed for testing.
 std::optional<OutputFormat> parse_format(const std::string& s);
 std::optional<BackPressure> parse_back_pressure(const std::string& s);
+std::optional<TimeFormat> parse_time_format(const std::string& s);
+std::optional<ColorMode> parse_color_mode(const std::string& s);
 // Parses "asfast" -> {AsFast, 1.0}, or a positive numeric factor in (0, 1000]
 // -> {Multiplier, factor}. Empty or out-of-range returns nullopt.
 std::optional<std::pair<ReplaySpeed, double>> parse_replay_speed(const std::string& s);
 const char* to_string(OutputFormat);
 const char* to_string(BackPressure);
+const char* to_string(TimeFormat);
+const char* to_string(ColorMode);
 
 } // namespace pcapture::cli
