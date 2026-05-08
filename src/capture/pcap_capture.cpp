@@ -1,7 +1,9 @@
 #include "capture/pcap_capture.hpp"
 
+#include "app/application.hpp"
 #include "capture/pcap_handle.hpp"
 #include "parser/parser.hpp"
+#include "output/color.hpp"
 #include "output/formatter.hpp"
 #include "output/hex_formatter.hpp"
 #include "capture/platform/signals.hpp"
@@ -17,6 +19,9 @@
   #include <sys/socket.h>
 #endif
 
+#include <algorithm>
+#include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -115,11 +120,14 @@ void render_interfaces(const std::vector<InterfaceInfo>& ifs,
     if (format == cli::OutputFormat::Json) {
         out << "[";
         bool first = true;
+        int index = 0;
         for (const auto& i : ifs) {
+            ++index;
             if (!first) out << ",";
             first = false;
             out << "{";
-            out << "\"name\":";         escape_json(i.name, out);
+            out << "\"index\":"        << index;
+            out << ",\"name\":";        escape_json(i.name, out);
             out << ",\"description\":"; escape_json(i.description, out);
             out << ",\"loopback\":"    << (i.loopback ? "true" : "false");
             out << ",\"up\":"          << (i.up ? "true" : "false");
@@ -140,8 +148,10 @@ void render_interfaces(const std::vector<InterfaceInfo>& ifs,
     }
 
     // Human / compact share a simple table.
+    int index = 0;
     for (const auto& i : ifs) {
-        out << i.name;
+        ++index;
+        out << "[" << index << "] " << i.name;
         std::string flags;
         if (i.loopback) flags += "loopback ";
         if (i.up)       flags += "up ";
@@ -171,6 +181,162 @@ int list_interfaces(cli::OutputFormat format, std::ostream& out, std::ostream& e
     return 0;
 }
 
+namespace {
+
+bool is_pure_digits(const std::string& s) {
+    if (s.empty()) return false;
+    return std::all_of(s.begin(), s.end(),
+                       [](unsigned char c) { return std::isdigit(c) != 0; });
+}
+
+std::string to_lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+bool icontains(const std::string& haystack, const std::string& needle_lower) {
+    if (needle_lower.empty()) return false;
+    const std::string h = to_lower(haystack);
+    return h.find(needle_lower) != std::string::npos;
+}
+
+InterfaceResolveResult ok_result(int index, const InterfaceInfo& info) {
+    InterfaceResolveResult r;
+    r.status = InterfaceResolveStatus::Ok;
+    r.resolved_name = info.name;
+    r.resolved_index = index;
+    r.resolved_description = info.description;
+    return r;
+}
+
+} // namespace
+
+InterfaceResolveResult resolve_interface(
+    const std::string& user_value,
+    const std::vector<InterfaceInfo>& interfaces) {
+
+    InterfaceResolveResult r;
+
+    if (user_value.empty()) {
+        r.status = InterfaceResolveStatus::EmptyInput;
+        return r;
+    }
+    if (interfaces.empty()) {
+        r.status = InterfaceResolveStatus::NoInterfaces;
+        return r;
+    }
+
+    // 1. Exact name match. Wins over numeric/substring so a user who pastes a
+    //    full device name never gets surprised by a coincidental substring hit.
+    for (std::size_t i = 0; i < interfaces.size(); ++i) {
+        if (interfaces[i].name == user_value) {
+            return ok_result(static_cast<int>(i + 1), interfaces[i]);
+        }
+    }
+
+    // 2. Pure-digit 1-based index. We reject "0" so indices line up with -L.
+    if (is_pure_digits(user_value)) {
+        int n = 0;
+        auto [_, ec] = std::from_chars(user_value.data(),
+                                       user_value.data() + user_value.size(), n);
+        if (ec == std::errc{} && n >= 1 &&
+            static_cast<std::size_t>(n) <= interfaces.size()) {
+            return ok_result(n, interfaces[static_cast<std::size_t>(n - 1)]);
+        }
+        r.status = InterfaceResolveStatus::IndexOutOfRange;
+        return r;
+    }
+
+    // 3. Case-insensitive substring on description, then on name.
+    const std::string needle = to_lower(user_value);
+    std::vector<InterfaceResolveCandidate> hits;
+    for (std::size_t i = 0; i < interfaces.size(); ++i) {
+        if (icontains(interfaces[i].description, needle)) {
+            hits.push_back({static_cast<int>(i + 1),
+                            interfaces[i].name,
+                            interfaces[i].description});
+        }
+    }
+    if (hits.empty()) {
+        for (std::size_t i = 0; i < interfaces.size(); ++i) {
+            if (icontains(interfaces[i].name, needle)) {
+                hits.push_back({static_cast<int>(i + 1),
+                                interfaces[i].name,
+                                interfaces[i].description});
+            }
+        }
+    }
+
+    if (hits.size() == 1) {
+        InterfaceResolveResult ok;
+        ok.status = InterfaceResolveStatus::Ok;
+        ok.resolved_name = hits[0].name;
+        ok.resolved_index = hits[0].index;
+        ok.resolved_description = hits[0].description;
+        return ok;
+    }
+    if (hits.empty()) {
+        r.status = InterfaceResolveStatus::NoMatch;
+        return r;
+    }
+    r.status = InterfaceResolveStatus::AmbiguousMatch;
+    r.candidates = std::move(hits);
+    return r;
+}
+
+bool resolve_user_interface(const std::string& user_value,
+                            std::string& resolved,
+                            std::ostream& err) {
+    std::vector<InterfaceInfo> ifs;
+    if (int rc = enumerate_interfaces(ifs, err); rc != 0) return false;
+
+    const auto r = resolve_interface(user_value, ifs);
+    switch (r.status) {
+    case InterfaceResolveStatus::Ok:
+        resolved = r.resolved_name;
+        // Only emit a note when the input was not the literal device name —
+        // exact-match users don't need the noise. Also gated on stderr being
+        // a TTY: when stderr is being captured (PowerShell `2>file`,
+        // `2>&1 > file`), this becomes the first stderr write and PS 5.1
+        // wraps it in a NativeCommandError envelope. The user already knows
+        // which interface they typed, so suppressing it costs them nothing.
+        if (user_value != r.resolved_name && format::stderr_is_tty()) {
+            err << "pcapture: -i \"" << user_value << "\" resolved to ["
+                << r.resolved_index << "] " << r.resolved_name;
+            if (!r.resolved_description.empty()) {
+                err << " (" << r.resolved_description << ")";
+            }
+            err << "\n";
+        }
+        return true;
+    case InterfaceResolveStatus::EmptyInput:
+        err << "pcapture: no interface specified (-i required for live capture)\n";
+        return false;
+    case InterfaceResolveStatus::NoInterfaces:
+        err << "pcapture: no capture-capable interfaces found\n";
+        return false;
+    case InterfaceResolveStatus::IndexOutOfRange:
+        err << "pcapture: interface index \"" << user_value
+            << "\" out of range (1.." << ifs.size() << "); try -L to list them\n";
+        return false;
+    case InterfaceResolveStatus::NoMatch:
+        err << "pcapture: -i \"" << user_value
+            << "\" did not match any interface name or description; try -L to list them\n";
+        return false;
+    case InterfaceResolveStatus::AmbiguousMatch:
+        err << "pcapture: -i \"" << user_value << "\" matched "
+            << r.candidates.size() << " interfaces:\n";
+        for (const auto& c : r.candidates) {
+            err << "  [" << c.index << "] " << c.name;
+            if (!c.description.empty()) err << " - " << c.description;
+            err << "\n";
+        }
+        err << "hint: pass a more specific substring, the index, or the full name.\n";
+        return false;
+    }
+    return false; // unreachable
+}
 
 namespace {
 
@@ -222,10 +388,19 @@ int run_synchronous(const cli::Config& cfg, std::ostream& out, std::ostream& err
     util::install_signal_handlers(); //registers the SIGINT(POSIX) or  console control (Windows) 
     util::set_active_pcap(opened.handle.get()); //publishes the live pcap_t* to the global atomic so the signal handler can call 
 
+    const auto tf = [&] {
+        switch (cfg.time_format) {
+        case cli::TimeFormat::None:     return format::TimeFormat::None;
+        case cli::TimeFormat::Relative: return format::TimeFormat::Relative;
+        case cli::TimeFormat::Absolute: return format::TimeFormat::Absolute;
+        case cli::TimeFormat::Epoch:    return format::TimeFormat::Epoch;
+        }
+        return format::TimeFormat::Relative;
+    }();
     std::unique_ptr<format::Formatter> fmt;
     switch (cfg.format) {
-        case cli::OutputFormat::Human:   fmt = format::make_human_formatter(cfg.verbosity); break;
-        case cli::OutputFormat::Compact: fmt = format::make_compact_formatter(); break;
+        case cli::OutputFormat::Human:   fmt = format::make_human_formatter(cfg.verbosity, tf); break;
+        case cli::OutputFormat::Compact: fmt = format::make_compact_formatter(tf); break;
         case cli::OutputFormat::Json:    fmt = format::make_json_formatter(); break;
     }
     fmt->prologue(out);
@@ -271,12 +446,20 @@ int run_synchronous(const cli::Config& cfg, std::ostream& out, std::ostream& err
     util::set_active_pcap(nullptr);
     fmt->epilogue(out);
 
-    err << "\npcapture: shutdown summary\n"
-        << "  packets displayed : " << state.stats.received << "\n"
-        << "  kernel received   : " << state.stats.kernel_received << "\n"
-        << "  kernel dropped    : " << state.stats.kernel_dropped << "\n"
-        << "  iface dropped     : " << state.stats.iface_dropped << "\n";
-
+    // Reuse the threaded-pipeline summary so live and replay paths render the
+    // same shape. The synchronous loop doesn't track a separate "decoded" or
+    // "queue drops" axis, so those rows mirror `received` / stay zero.
+    pipeline::PipelineStats sum;
+    sum.captured        = state.stats.received;
+    sum.decoded         = state.stats.received;
+    sum.printed         = state.stats.received;
+    sum.dropped_queue   = 0;
+    sum.kernel_received = state.stats.kernel_received;
+    sum.kernel_dropped  = state.stats.kernel_dropped;
+    sum.iface_dropped   = state.stats.iface_dropped;
+    pipeline::write_shutdown_summary(err, sum, /*include_kernel=*/!offline,
+                                     format::no_color_palette(),
+                                     /*unicode_ok=*/format::stderr_is_tty());
     return rc;
 }
 

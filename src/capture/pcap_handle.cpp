@@ -1,9 +1,11 @@
 #include "capture/pcap_handle.hpp"
+#include "capture/pcap_capture.hpp"
 
 #include <pcap.h>
 
 #include <optional>
 #include <ostream>
+#include <string>
 #include <utility>
 
 namespace pcapture::capture {
@@ -69,15 +71,23 @@ std::optional<OpenError> finish_open(pcap_t* p, const cli::Config& cfg,
 } // namespace
 
 OpenResult open_live(const cli::Config& cfg, std::ostream& err) {
+    // Resolve numeric indices and substring shortcuts to a real device name
+    // before handing it to libpcap. Exact device names pass through unchanged.
+    std::string device;
+    if (!resolve_user_interface(cfg.interface, device, err)) {
+        return OpenResult::err({OpenErrorKind::DeviceOpenFailed,
+                                "interface resolution failed"});
+    }
+
     char errbuf[PCAP_ERRBUF_SIZE] = {0};
 
-    pcap_t* p = pcap_open_live(cfg.interface.c_str(),
+    pcap_t* p = pcap_open_live(device.c_str(),
                                cfg.snaplen,
                                cfg.promiscuous ? 1 : 0,
                                cfg.read_timeout_ms,
                                errbuf);
     if (!p) {
-        err << "pcap_open_live(" << cfg.interface << "): " << errbuf << "\n";
+        err << "pcap_open_live(" << device << "): " << errbuf << "\n";
         return OpenResult::err({OpenErrorKind::DeviceOpenFailed, errbuf});
     }
 
