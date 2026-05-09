@@ -98,6 +98,9 @@ add_library(pcapture_core
   src/output/json_formatter.cpp
   src/output/sink.cpp
   src/output/hex_formatter.cpp
+  src/output/color.cpp
+  src/output/banner.cpp
+  src/output/table.cpp
   src/app/packet_queue.cpp
   src/app/application.cpp
 )
@@ -131,6 +134,10 @@ if(BUILD_TESTING)
     tests/test_filter.cpp
     tests/test_hexdump.cpp
     tests/test_replay_pipeline.cpp
+    tests/test_interface_resolver.cpp
+    tests/test_color.cpp
+    tests/test_banner.cpp
+    tests/test_table.cpp
   )
   target_link_libraries(pcapture_tests PRIVATE pcapture_core pcap::pcap GTest::gtest_main)
   include(GoogleTest)

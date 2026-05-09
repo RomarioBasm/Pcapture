@@ -37,23 +37,37 @@ extend, test, and reason about.
 - **Decoders** for Ethernet, 802.1Q VLAN tags (Q-in-Q, recursion capped at 8 levels), IPv4, IPv6 with extension-header walking, ARP, TCP, UDP, ICMP, ICMPv6.
 - **Three output formats**: column table (`human`), one-liner (`compact`), JSON Lines (`json`).
 - **Two-stage filtering**: kernel-side BPF (`-f`) and decoded-side `key=value` predicates (`-m`, repeatable, AND'd).
-- **Threaded pipeline** with a bounded queue and selectable back-pressure (`drop-newest` / `drop-oldest` / `block`).
+- **Three-thread pipeline** (capture / decoder / formatter) joined by two bounded queues with selectable back-pressure (`drop-newest` / `drop-oldest` / `block`).
 - Optional **checksum validation** for IPv4/TCP/UDP/ICMP/ICMPv6.
 - Verbose / hex-dump modes (`-v` / `-vv`).
 - Graceful shutdown with capture and kernel summary on stderr.
 
 ## Architecture
 
-Single-direction pipeline. Capture is decoupled from decode and output by a
-bounded queue, so a slow terminal or filesystem cannot stall the kernel ring.
+Single-direction pipeline. Capture, decoding, and output run on three separate
+threads connected by two bounded queues, so neither parsing cost nor a slow
+terminal/filesystem can stall the kernel ring.
 
 ```
-+-----------+   +-------------+   +---------+   +--------+   +-----------+
-|  libpcap  |-->|   Bounded   |-->| Decoder |-->| Filter |-->| Formatter |--> stdout / file
-|  / Npcap  |   |  Queue<F>   |   | + reg.  |   |        |   |           |
-+-----------+   +-------------+   +---------+   +--------+   +-----------+
- capture thread                          decode + format thread
++-----------+   +----------+   +-----------+   +----------+   +-----------+
+|  libpcap  |-->|   Q1     |-->| Decoder   |-->|   Q2     |-->| Formatter |--> stdout / file
+|  / Npcap  |   | RawFrame |   | + Filter  |   | Decoded  |   |           |
++-----------+   +----------+   +-----------+   +----------+   +-----------+
+ capture thread                decoder thread                  formatter thread
 ```
+
+- **Capture thread** owns `pcap_dispatch`. The libpcap callback pushes
+  `RawFrame { timestamp, seq, captured_len, original_len, bytes }` into Q1.
+- **Decoder thread** pops Q1, runs the registry-driven decoder chain
+  (Ethernet → VLAN → L3 → L4), applies the `--match` predicate filter, and
+  pushes a `DecodedPacket` into Q2. Filtered packets never cross Q2.
+- **Formatter thread** pops Q2, renders via the configured `Formatter`
+  (human / compact / JSON), and writes to the sink.
+
+Both queues honour `--queue-capacity` and `--back-pressure`. Drops on either
+queue are tallied into the single `queue drops` summary row. Shutdown
+propagates in pipeline order: capture exits → Q1 closes → decoder drains and
+closes Q2 → formatter drains.
 
 ## Installation
 
