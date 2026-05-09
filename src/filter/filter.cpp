@@ -163,7 +163,7 @@ Predicate make_vlan(const std::string& v, std::string& error) {
 
 } // namespace
 
-std::unique_ptr<Filter> pass_through() {
+std::unique_ptr<Filter> pass_through() {//no filter operation
     return std::make_unique<Compound>(std::vector<Predicate>{});
 }
 

@@ -51,6 +51,11 @@ struct VlanTag {
     std::uint8_t pcp = 0;
     bool dei = false;
     std::uint16_t vid = 0;
+    // EtherType immediately following this tag on the wire. For the innermost
+    // tag this is the L3 protocol (e.g. 0x0800); for an outer tag in Q-in-Q
+    // it is the next tag's TPID (0x8100 / 0x88A8). Recorded so formatters
+    // can show what the tag actually points at without re-walking the chain.
+    std::uint16_t inner_ethertype = 0;
 };
 
 struct Ipv4 {

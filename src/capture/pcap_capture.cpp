@@ -457,9 +457,18 @@ int run_synchronous(const cli::Config& cfg, std::ostream& out, std::ostream& err
     sum.kernel_received = state.stats.kernel_received;
     sum.kernel_dropped  = state.stats.kernel_dropped;
     sum.iface_dropped   = state.stats.iface_dropped;
-    pipeline::write_shutdown_summary(err, sum, /*include_kernel=*/!offline,
+    // Route the summary to stdout instead of stderr when stderr isn't a TTY,
+    // so PowerShell 5.1's NativeCommandError envelope can't wrap any first
+    // stderr write. The "# " comment prefix keeps machine consumers of the
+    // packet stream able to filter the summary out cleanly. See run_threaded
+    // for the full reasoning.
+    const bool stderr_tty = format::stderr_is_tty();
+    const bool reroute = cfg.format != cli::OutputFormat::Human && !stderr_tty;
+    std::ostream& chrome = (cfg.format == cli::OutputFormat::Human || reroute) ? out : err;
+    pipeline::write_shutdown_summary(chrome, sum, /*include_kernel=*/!offline,
                                      format::no_color_palette(),
-                                     /*unicode_ok=*/format::stderr_is_tty());
+                                     /*unicode_ok=*/stderr_tty && !reroute,
+                                     /*comment_prefix=*/reroute);
     return rc;
 }
 
