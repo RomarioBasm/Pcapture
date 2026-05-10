@@ -1,0 +1,51 @@
+$ sudo ./build/pcapture -i eth0 -F compact -f "udp port 5201" -d 10
+
+# UDP throughput run against an iperf3 server in another terminal:
+#   iperf3 -c iperf.example.net -u -b 100M -t 10
+# `-F compact` drops the column table for one short line per frame:
+#     <Δt> <PROTO> <src>:<sport> > <dst>:<dport> [<flags>] len=<bytes>
+# Brackets wrap IPv6 endpoints so the trailing :port stays visually
+# distinct from a zero-compressed segment.
+
++0.000000 UDP    [2003:c4:370c:6c00:3d25:abe2:5772:467c]:50241 > [2a05:45c7:f000:100::215]:5201 len=66
++0.159443 UDP    [2003:c4:370c:6c00:3d25:abe2:5772:467c]:50241 > [2a05:45c7:f000:100::215]:5201 len=1502
++0.267961 UDP    [2003:c4:370c:6c00:3d25:abe2:5772:467c]:50241 > [2a05:45c7:f000:100::215]:5201 len=1502
++0.268407 UDP    [2003:c4:370c:6c00:3d25:abe2:5772:467c]:50241 > [2a05:45c7:f000:100::215]:5201 len=1502
++0.268605 UDP    [2003:c4:370c:6c00:3d25:abe2:5772:467c]:50241 > [2a05:45c7:f000:100::215]:5201 len=1502
++0.268848 UDP    [2003:c4:370c:6c00:3d25:abe2:5772:467c]:50241 > [2a05:45c7:f000:100::215]:5201 len=1502
++0.269075 UDP    [2003:c4:370c:6c00:3d25:abe2:5772:467c]:50241 > [2a05:45c7:f000:100::215]:5201 len=1502
++0.269346 UDP    [2003:c4:370c:6c00:3d25:abe2:5772:467c]:50241 > [2a05:45c7:f000:100::215]:5201 len=1502
++0.269568 UDP    [2003:c4:370c:6c00:3d25:abe2:5772:467c]:50241 > [2a05:45c7:f000:100::215]:5201 len=1502
++0.269835 UDP    [2003:c4:370c:6c00:3d25:abe2:5772:467c]:50241 > [2a05:45c7:f000:100::215]:5201 len=1502
+... 84 116 lines elided ...
++9.998021 UDP    [2003:c4:370c:6c00:3d25:abe2:5772:467c]:50241 > [2a05:45c7:f000:100::215]:5201 len=1502
++9.998244 UDP    [2003:c4:370c:6c00:3d25:abe2:5772:467c]:50241 > [2a05:45c7:f000:100::215]:5201 len=1502
+
+# stderr (compact and json modes keep the summary on stderr so machine
+# consumers piping stdout don't have to filter it out):
+─── capture ────────────────────────────────── [ ▌▌▌ ] ──────────────────────────────────  84128 frames · 0 drops
+
+┌─ pcapture ────────────────────────┐  ┌─ kernel ─────────────────────────┐
+│  ✓ captured      84128            │  │  ● received        84203         │
+│  ✓ decoded       84128            │  │  ✓ dropped             0  (0.0%) │
+│    filtered          0  (0.0%)    │  │  ✓ iface dropped       0         │
+│  ✓ displayed     84128            │  └──────────────────────────────────┘
+│  ✓ queue drops       0            │
+└───────────────────────────────────┘
+
+# A second-by-second goodput table is just a one-liner — bucket each frame
+# by truncated Δt, sum the lengths:
+$ sudo ./build/pcapture -i eth0 -F compact -f "udp port 5201" -d 10 \
+    | awk '{ s = int(substr($1,2)); b[s] += substr($NF,5) + 0 }
+           END { for (k in b) printf "%2ds  %.1f MB\n", k, b[k]/1e6 }' \
+    | sort
+ 0s  10.6 MB
+ 1s  11.9 MB
+ 2s  12.0 MB
+ 3s  12.0 MB
+ 4s  12.0 MB
+ 5s  12.0 MB
+ 6s  12.0 MB
+ 7s  12.0 MB
+ 8s  12.0 MB
+ 9s  10.9 MB

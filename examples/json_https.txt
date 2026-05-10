@@ -1,0 +1,34 @@
+$ sudo ./build/pcapture -i eth0 -F json -f "host iperf.example.net and port 5201" -d 10 | tee /tmp/run.jsonl | jq -c .
+
+# 10-second TCP throughput run against an iperf3 server in another terminal:
+#   iperf3 -c iperf.example.net -t 10
+# JSON Lines: one frame per line, machine-parseable. The schema is "v":1,
+# carrying a per-capture monotonic "seq", microsecond unix timestamp,
+# captured/wire byte counts, then layered eth / l3 / l4 objects.
+# Numeric fields stay numbers (ports, ttl, flags) so jq filters can compare
+# them directly without parsing strings.
+
+{"v":1,"ts_us":1778189894147057,"seq":1,"caplen":86,"len":86,"eth":{"src":"00:f4:8d:e6:ce:3b","dst":"e0:28:6d:04:a6:96","ethertype":34525},"ipv6":{"src":"2003:c4:370c:6c00:3d25:abe2:5772:467c","dst":"2a05:45c7:f000:100::215","next_header":6,"hop_limit":255,"payload_length":32},"tcp":{"sport":49737,"dport":5201,"seq":4053507135,"ack":0,"flags":2,"window":65535}}
+{"v":1,"ts_us":1778189894258671,"seq":2,"caplen":86,"len":86,"eth":{"src":"e0:28:6d:04:a6:96","dst":"00:f4:8d:e6:ce:3b","ethertype":34525},"ipv6":{"src":"2a05:45c7:f000:100::215","dst":"2003:c4:370c:6c00:3d25:abe2:5772:467c","next_header":6,"hop_limit":56,"payload_length":32},"tcp":{"sport":5201,"dport":49737,"seq":945011689,"ack":4053507136,"flags":18,"window":27192}}
+{"v":1,"ts_us":1778189894258986,"seq":3,"caplen":74,"len":74,"eth":{"src":"00:f4:8d:e6:ce:3b","dst":"e0:28:6d:04:a6:96","ethertype":34525},"ipv6":{"src":"2003:c4:370c:6c00:3d25:abe2:5772:467c","dst":"2a05:45c7:f000:100::215","next_header":6,"hop_limit":255,"payload_length":20},"tcp":{"sport":49737,"dport":5201,"seq":4053507136,"ack":945011690,"flags":16,"window":53248}}
+{"v":1,"ts_us":1778189894259419,"seq":4,"caplen":111,"len":111,"eth":{"src":"00:f4:8d:e6:ce:3b","dst":"e0:28:6d:04:a6:96","ethertype":34525},"ipv6":{"src":"2003:c4:370c:6c00:3d25:abe2:5772:467c","dst":"2a05:45c7:f000:100::215","next_header":6,"hop_limit":255,"payload_length":57},"tcp":{"sport":49737,"dport":5201,"seq":4053507136,"ack":945011690,"flags":24,"window":53248}}
+{"v":1,"ts_us":1778189894371020,"seq":5,"caplen":74,"len":74,"eth":{"src":"e0:28:6d:04:a6:96","dst":"00:f4:8d:e6:ce:3b","ethertype":34525},"ipv6":{"src":"2a05:45c7:f000:100::215","dst":"2003:c4:370c:6c00:3d25:abe2:5772:467c","next_header":6,"hop_limit":56,"payload_length":20},"tcp":{"sport":5201,"dport":49737,"seq":945011690,"ack":4053507173,"flags":16,"window":7}}
+... 23 879 lines elided ...
+{"v":1,"ts_us":1778189904099812,"seq":23884,"caplen":74,"len":74,"eth":{"src":"00:f4:8d:e6:ce:3b","dst":"e0:28:6d:04:a6:96","ethertype":34525},"ipv6":{"src":"2003:c4:370c:6c00:3d25:abe2:5772:467c","dst":"2a05:45c7:f000:100::215","next_header":6,"hop_limit":255,"payload_length":20},"tcp":{"sport":49737,"dport":5201,"seq":4063502201,"ack":945011691,"flags":17,"window":53247}}
+{"v":1,"ts_us":1778189904100244,"seq":23885,"caplen":74,"len":74,"eth":{"src":"e0:28:6d:04:a6:96","dst":"00:f4:8d:e6:ce:3b","ethertype":34525},"ipv6":{"src":"2a05:45c7:f000:100::215","dst":"2003:c4:370c:6c00:3d25:abe2:5772:467c","next_header":6,"hop_limit":56,"payload_length":20},"tcp":{"sport":5201,"dport":49737,"seq":945011691,"ack":4063502202,"flags":17,"window":7}}
+
+# Aggregate the run with jq — bytes by direction, per-second goodput, etc.
+$ jq -s 'map(select(.tcp.dport==5201)) | (map(.len)|add) as $b | "uplink: \($b) B (~\(($b*8/10/1e6 | tostring))[0:6]) Mbit/s"' /tmp/run.jsonl
+"uplink: 17847232 B (~14.277) Mbit/s"
+
+# stderr (summary lands on stderr in JSON mode, so it never contaminates
+# the JSONL on stdout):
+─── capture ───────────────────────────────── [ ▌▌▌ ] ─────────────────────────────────  23885 frames · 0 drops
+
+┌─ pcapture ────────────────────────┐  ┌─ kernel ─────────────────────────┐
+│  ✓ captured      23885            │  │  ● received        23901         │
+│  ✓ decoded       23885            │  │  ✓ dropped             0  (0.0%) │
+│    filtered          0  (0.0%)    │  │  ✓ iface dropped       0         │
+│  ✓ displayed     23885            │  └──────────────────────────────────┘
+│  ✓ queue drops       0            │
+└───────────────────────────────────┘

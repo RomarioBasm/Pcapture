@@ -1,0 +1,65 @@
+$ sudo ./build/pcapture --list-interfaces
+
+# Plain text on stdout: one block per device, with link state in brackets,
+# the libpcap description, and every IPv4/IPv6 address bound to it.
+# On Windows this is the Npcap NPF\Device\... name; on Linux/macOS it's
+# the kernel's interface name (eth0, en0, …).
+
+eth0  [up running]
+    description: Realtek RTL8111
+    ipv4: 192.168.1.42
+    ipv6: fe80::a00:27ff:fe14:38b
+    ipv6: 2001:db8:1234:5678:a00:27ff:fe14:38b
+wlan0  [up running]
+    description: Intel Wi-Fi 6 AX200
+    ipv4: 192.168.1.43
+    ipv6: fe80::d58d:8cf0:fb01:76fa
+lo  [loopback up running]
+    ipv4: 127.0.0.1
+    ipv6: ::1
+any  [up running]
+    description: Pseudo-device that captures on all interfaces
+docker0  [up]
+    ipv4: 172.17.0.1
+
+
+$ sudo ./build/pcapture --list-interfaces -F json | jq .
+
+# `-F json` switches the listing to JSON for scripts: pick the first
+# non-loopback running interface with `jq`, feed it back into pcapture, etc.
+
+[
+  {
+    "name": "eth0",
+    "description": "Realtek RTL8111",
+    "loopback": false,
+    "up": true,
+    "running": true,
+    "addresses": [
+      { "family": "ipv4", "address": "192.168.1.42" },
+      { "family": "ipv6", "address": "fe80::a00:27ff:fe14:38b" },
+      { "family": "ipv6", "address": "2001:db8:1234:5678:a00:27ff:fe14:38b" }
+    ]
+  },
+  {
+    "name": "wlan0",
+    "description": "Intel Wi-Fi 6 AX200",
+    "loopback": false,
+    "up": true,
+    "running": true,
+    "addresses": [
+      { "family": "ipv4", "address": "192.168.1.43" },
+      { "family": "ipv6", "address": "fe80::d58d:8cf0:fb01:76fa" }
+    ]
+  },
+  {
+    "name": "lo",
+    "loopback": true,
+    "up": true,
+    "running": true,
+    "addresses": [
+      { "family": "ipv4", "address": "127.0.0.1" },
+      { "family": "ipv6", "address": "::1" }
+    ]
+  }
+]
