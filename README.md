@@ -146,41 +146,22 @@ pcapture [flags]
 
 ## Example output
 
-Human (default), 5 frames, BPF + decoded-side filter:
+<p align="center">
+  <img src="docs/assets/sample-output.png" alt="Pcapture live capture on Windows showing colored human output, capture banner, and shutdown summary panels" width="900" />
+</p>
 
-```
-$ sudo ./build/pcapture -i eth0 -c 5 -f "tcp" -m proto=tcp -m dport=443
-  Δt           proto    src                          dst                          flags   win     size
-  +0.000000    TCP      192.168.1.42:54812        →  104.16.124.96:443            [S]     64240    74 B
-  +0.013421    TCP      104.16.124.96:443         →  192.168.1.42:54812           [SA]    65535    74 B
-  +0.013506    TCP      192.168.1.42:54812        →  104.16.124.96:443            [A]       512    66 B
-```
-
-JSON Lines, pipeable into `jq`:
-
-```
-$ sudo ./build/pcapture -i eth0 -F json -c 1 -m dport=443 | jq -c .
-{"ts_us":1730802512345678,"caplen":74,"len":74,"eth":{"src":"de:ad:be:ef:00:01","dst":"00:13:5f:1c:7d:50","ethertype":2048},"ipv4":{"src":"192.168.1.42","dst":"93.184.216.34","proto":6,"ttl":64,"total_length":60},"tcp":{"sport":58432,"dport":443,"seq":2891241334,"ack":0,"flags":2,"window":64240}}
-```
+A live capture on Windows. The top section is the default `human` formatter —
+one row per frame with relative timestamp, protocol, source, destination, TCP
+flags, window, and captured size, color-coded by protocol. The footer panels
+are the shutdown summary printed to stderr: `pcapture` accounts for every
+frame through the pipeline (captured → decoded → filtered → displayed, plus
+queue drops), while `kernel` reports what libpcap/Npcap saw at the ring
+(received, dropped, iface-dropped). Mismatches between the two are the fastest
+way to tell whether loss happened in the kernel ring or inside Pcapture's own
+queues.
 
 Verbose (`-v`) and hex-dump (`-vv`) transcripts, plus a `--list-interfaces`
 sample, live in [examples/](examples/).
-
-### Shutdown summary (stderr)
-
-```
-=== pcapture summary ===
-  captured            1284
-  decoded             1284
-  filtered             312   (24.3% of decoded)
-  displayed            972
-  queue drops            0
-
-=== kernel ===
-  received            1284
-  dropped                0   (0.0% of received)
-  iface dropped          0
-```
 
 ## Repository structure
 
