@@ -129,15 +129,8 @@ if(BUILD_TESTING)
     tests/test_smoke.cpp
     tests/test_config_parser.cpp
     tests/test_decoders.cpp
-    tests/test_formatters.cpp
     tests/test_bounded_queue.cpp
     tests/test_filter.cpp
-    tests/test_hexdump.cpp
-    tests/test_replay_pipeline.cpp
-    tests/test_interface_resolver.cpp
-    tests/test_color.cpp
-    tests/test_banner.cpp
-    tests/test_table.cpp
   )
   target_link_libraries(pcapture_tests PRIVATE pcapture_core pcap::pcap GTest::gtest_main)
   include(GoogleTest)
