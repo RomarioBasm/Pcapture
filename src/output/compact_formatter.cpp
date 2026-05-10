@@ -32,34 +32,28 @@ public:
         bool has_ports = false;
         bool is_ipv6 = false;
 
-        std::visit([&](const auto& l3) {
-            using T = std::decay_t<decltype(l3)>;
-            if constexpr (std::is_same_v<T, Ipv4>) {
-                src = format_ipv4(l3.src);
-                dst = format_ipv4(l3.dst);
-            } else if constexpr (std::is_same_v<T, Ipv6>) {
-                src = format_ipv6(l3.src);
-                dst = format_ipv6(l3.dst);
-                is_ipv6 = true;
-            } else if constexpr (std::is_same_v<T, Arp>) {
-                src = format_ipv4(l3.spa);
-                dst = format_ipv4(l3.tpa);
-                proto = "ARP";
-            }
-        }, pkt.l3);
+        if (auto* v4 = std::get_if<Ipv4>(&pkt.l3)) {
+            src = format_ipv4(v4->src);
+            dst = format_ipv4(v4->dst);
+        } else if (auto* v6 = std::get_if<Ipv6>(&pkt.l3)) {
+            src = format_ipv6(v6->src);
+            dst = format_ipv6(v6->dst);
+            is_ipv6 = true;
+        } else if (auto* ar = std::get_if<Arp>(&pkt.l3)) {
+            src = format_ipv4(ar->spa);
+            dst = format_ipv4(ar->tpa);
+            proto = "ARP";
+        }
 
         const Tcp* tcp_ptr = nullptr;
-        std::visit([&](const auto& l4) {
-            using T = std::decay_t<decltype(l4)>;
-            if constexpr (std::is_same_v<T, Tcp>) {
-                proto = "TCP"; sport = l4.sport; dport = l4.dport; has_ports = true;
-                tcp_ptr = &l4;
-            } else if constexpr (std::is_same_v<T, Udp>) {
-                proto = "UDP"; sport = l4.sport; dport = l4.dport; has_ports = true;
-            } else if constexpr (std::is_same_v<T, Icmp>) {
-                proto = l4.v6 ? "ICMPv6" : "ICMP";
-            }
-        }, pkt.l4);
+        if (auto* t = std::get_if<Tcp>(&pkt.l4)) {
+            proto = "TCP"; sport = t->sport; dport = t->dport; has_ports = true;
+            tcp_ptr = t;
+        } else if (auto* u = std::get_if<Udp>(&pkt.l4)) {
+            proto = "UDP"; sport = u->sport; dport = u->dport; has_ports = true;
+        } else if (auto* c = std::get_if<Icmp>(&pkt.l4)) {
+            proto = c->v6 ? "ICMPv6" : "ICMP";
+        }
 
         if (src.empty() && pkt.ethernet) {
             src = format_mac(pkt.ethernet->src);

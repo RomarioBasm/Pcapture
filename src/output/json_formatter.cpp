@@ -66,51 +66,45 @@ public:
             out << "]";
         }
 
-        std::visit([&](const auto& l3) {
-            using T = std::decay_t<decltype(l3)>;
-            if constexpr (std::is_same_v<T, Ipv4>) {
-                out << ",\"ipv4\":{\"src\":";
-                json_string(out, format_ipv4(l3.src));
-                out << ",\"dst\":";
-                json_string(out, format_ipv4(l3.dst));
-                out << ",\"proto\":" << static_cast<int>(l3.proto)
-                    << ",\"ttl\":" << static_cast<int>(l3.ttl)
-                    << ",\"total_length\":" << l3.total_length << "}";
-            } else if constexpr (std::is_same_v<T, Ipv6>) {
-                out << ",\"ipv6\":{\"src\":";
-                json_string(out, format_ipv6(l3.src));
-                out << ",\"dst\":";
-                json_string(out, format_ipv6(l3.dst));
-                out << ",\"next_header\":" << static_cast<int>(l3.next_header)
-                    << ",\"hop_limit\":" << static_cast<int>(l3.hop_limit)
-                    << ",\"payload_length\":" << l3.payload_length << "}";
-            } else if constexpr (std::is_same_v<T, Arp>) {
-                out << ",\"arp\":{\"op\":" << l3.op
-                    << ",\"spa\":";  json_string(out, format_ipv4(l3.spa));
-                out << ",\"tpa\":";  json_string(out, format_ipv4(l3.tpa));
-                out << "}";
-            }
-        }, pkt.l3);
+        if (auto* v4 = std::get_if<Ipv4>(&pkt.l3)) {
+            out << ",\"ipv4\":{\"src\":";
+            json_string(out, format_ipv4(v4->src));
+            out << ",\"dst\":";
+            json_string(out, format_ipv4(v4->dst));
+            out << ",\"proto\":" << static_cast<int>(v4->proto)
+                << ",\"ttl\":" << static_cast<int>(v4->ttl)
+                << ",\"total_length\":" << v4->total_length << "}";
+        } else if (auto* v6 = std::get_if<Ipv6>(&pkt.l3)) {
+            out << ",\"ipv6\":{\"src\":";
+            json_string(out, format_ipv6(v6->src));
+            out << ",\"dst\":";
+            json_string(out, format_ipv6(v6->dst));
+            out << ",\"next_header\":" << static_cast<int>(v6->next_header)
+                << ",\"hop_limit\":" << static_cast<int>(v6->hop_limit)
+                << ",\"payload_length\":" << v6->payload_length << "}";
+        } else if (auto* ar = std::get_if<Arp>(&pkt.l3)) {
+            out << ",\"arp\":{\"op\":" << ar->op
+                << ",\"spa\":";  json_string(out, format_ipv4(ar->spa));
+            out << ",\"tpa\":";  json_string(out, format_ipv4(ar->tpa));
+            out << "}";
+        }
 
-        std::visit([&](const auto& l4) {
-            using T = std::decay_t<decltype(l4)>;
-            if constexpr (std::is_same_v<T, Tcp>) {
-                out << ",\"tcp\":{\"sport\":" << l4.sport
-                    << ",\"dport\":" << l4.dport
-                    << ",\"seq\":" << l4.seq
-                    << ",\"ack\":" << l4.ack
-                    << ",\"flags\":" << static_cast<int>(l4.flags)
-                    << ",\"window\":" << l4.window << "}";
-            } else if constexpr (std::is_same_v<T, Udp>) {
-                out << ",\"udp\":{\"sport\":" << l4.sport
-                    << ",\"dport\":" << l4.dport
-                    << ",\"length\":" << l4.length << "}";
-            } else if constexpr (std::is_same_v<T, Icmp>) {
-                out << (l4.v6 ? ",\"icmpv6\":{" : ",\"icmp\":{")
-                    << "\"type\":" << static_cast<int>(l4.type)
-                    << ",\"code\":" << static_cast<int>(l4.code) << "}";
-            }
-        }, pkt.l4);
+        if (auto* t = std::get_if<Tcp>(&pkt.l4)) {
+            out << ",\"tcp\":{\"sport\":" << t->sport
+                << ",\"dport\":" << t->dport
+                << ",\"seq\":" << t->seq
+                << ",\"ack\":" << t->ack
+                << ",\"flags\":" << static_cast<int>(t->flags)
+                << ",\"window\":" << t->window << "}";
+        } else if (auto* u = std::get_if<Udp>(&pkt.l4)) {
+            out << ",\"udp\":{\"sport\":" << u->sport
+                << ",\"dport\":" << u->dport
+                << ",\"length\":" << u->length << "}";
+        } else if (auto* c = std::get_if<Icmp>(&pkt.l4)) {
+            out << (c->v6 ? ",\"icmpv6\":{" : ",\"icmp\":{")
+                << "\"type\":" << static_cast<int>(c->type)
+                << ",\"code\":" << static_cast<int>(c->code) << "}";
+        }
 
         if (!pkt.errors.empty()) {
             out << ",\"errors\":[";

@@ -14,22 +14,36 @@
 
 ---
 
+## Quickstart
+
+```sh
+cmake -B build && cmake --build build -j
+sudo ./build/pcapture -i eth0 -c 10              # Linux/macOS, 10 frames
+.\build\Release\pcapture.exe -L                  # Windows, list interfaces
+```
+
 ## Overview
 
-Pcapture is a cross-platform C++17 command-line sniffer. It captures Ethernet
-frames from a local interface (libpcap on Linux/macOS, Npcap on Windows) or
-replays a saved `.pcap` file, decodes Layer 2–4 headers, and renders the result
-as human, compact, or JSON Lines output.
+Pcapture is a portable C++17 command-line sniffer that runs on **Linux, macOS,
+and Windows** from the same source tree. It captures Ethernet frames from a
+local interface (libpcap on Linux/macOS, Npcap on Windows) or replays a saved
+`.pcap` file, decodes Layer 2–4 headers, and renders the result as human,
+compact, or JSON Lines output — identically on every platform.
 
-It is intentionally **not** a Wireshark replacement: no GUI, no deep dissectors,
-no TLS decryption. The focus is a clean layered pipeline that is easy to
-extend, test, and reason about.
+## Why Pcapture?
 
-## Purpose
-
-- Surface live or replayed Ethernet/VLAN/IP/TCP/UDP/ICMP traffic in a structured form.
-- Pipe decoded frames into other tools via JSON Lines.
-- Serve as a small, readable reference for a layered protocol-decoder pipeline.
+- **Drop-in JSON Lines pipelines.** Decoded frames stream straight into `jq`,
+  `awk`, log shippers, or any line-oriented store — no XML, no protobuf, no
+  custom parsers.
+- **Headless and dependency-light.** A single binary plus libpcap/Npcap. Fits
+  containers, jump hosts, embedded gateways, and CI runners where a GUI
+  sniffer is impractical.
+- **Cross-platform parity.** The same CLI, decoders, and output formats on
+  Linux, macOS, and Windows — so capture scripts written on one OS run
+  unchanged on the others.
+- **Readable reference implementation.** A layered, three-thread pipeline
+  (capture → decode → format) that's small enough to read end-to-end and
+  extend with a new protocol or output format in a single file.
 
 ## Key features
 
@@ -192,12 +206,22 @@ sample, live in [examples/](examples/).
 | [tests/](tests/)                 | GoogleTest unit tests for every layer |
 | [examples/](examples/)           | pre-recorded output transcripts |
 
-## Known limitations
+## Known limitations & roadmap
 
-- **Read-only on capture files**: pcapture replays `.pcap` but does not write them. PCAP-NG is not supported in either direction.
-- **No reassembly**: TCP streams and IPv6 fragments are decoded per-frame only.
-- **No application-layer dissection**: HTTP, DNS, DHCP, TLS, etc. stop at L4; payload bytes are not emitted by default.
-- **Single interface per run**: `-i` accepts one device; simultaneous multi-interface capture is not supported.
-- **No output rotation**: `-o` writes to a single file; size- or time-based splitting is not implemented.
-- **Microsecond timestamp resolution in output**: JSON exposes `ts_us`; sub-microsecond precision is not surfaced even if the kernel provides it.
+Each current limitation is paired with the planned improvement that addresses it.
+
+| Limitation today | Planned improvement |
+|------------------|---------------------|
+| **Capture-file output**: replays `.pcap` but does not write them; PCAP-NG unsupported in either direction. `-o` writes a single file with no rotation. | `.pcap` / `.pcapng` export and long-running capture rotation (size- or time-based). |
+| **Single interface per run**: `-i` accepts one device. | Multi-interface capture with per-interface tagging and merged timestamps. |
+| **No reassembly**: TCP streams and IPv6 fragments are decoded per-frame only. | TCP stream tracking, retransmission detection, and IP fragment reassembly. |
+| **L4-only dissection**: HTTP, DNS, DHCP, TLS, NTP, PTP stop at L4; payload bytes are not emitted. | Extend protocol coverage with DNS, DHCP, HTTP headers, TLS metadata, NTP, and PTP. |
+| **AND-only filter grammar**: `-m` predicates are combined with implicit AND; no `OR`, comparisons, or value lists. | Boolean expressions, comparisons, value lists, and reusable filter profiles. |
+| **No runtime statistics**: only an end-of-run summary is produced. | Live top talkers, protocol counters, bandwidth, queue usage, and drop-reason breakdowns. |
+| **Three output formats only** (`human`, `compact`, `json`). | Additional formats: CSV, Markdown, YAML, and summary reports. |
+| **Static pipeline tuning**: queue capacity and back-pressure are configurable, but no batching or benchmark mode. | Batched output, queue telemetry, benchmark mode, and optional high-performance backends. |
+
+Other planned work: fuzz / malformed-packet / golden-output tests and
+cross-platform CI; config files, capture profiles, shell completion, packaged
+releases, and troubleshooting docs.
 

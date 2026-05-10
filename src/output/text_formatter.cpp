@@ -76,18 +76,12 @@ void render_table_row(const DecodedPacket& pkt,
     const char* proto = "ETH";
     bool is_arp = false;
     bool is_l2_only = std::holds_alternative<std::monostate>(pkt.l3);
-    std::visit([&](const auto& l3) {
-        using T = std::decay_t<decltype(l3)>;
-        if constexpr (std::is_same_v<T, Ipv4>) proto = "IPv4";
-        else if constexpr (std::is_same_v<T, Ipv6>) proto = "IPv6";
-        else if constexpr (std::is_same_v<T, Arp>)  { proto = "ARP"; is_arp = true; }
-    }, pkt.l3);
-    std::visit([&](const auto& l4) {
-        using T = std::decay_t<decltype(l4)>;
-        if constexpr (std::is_same_v<T, Tcp>)  proto = "TCP";
-        else if constexpr (std::is_same_v<T, Udp>)  proto = "UDP";
-        else if constexpr (std::is_same_v<T, Icmp>) proto = l4.v6 ? "ICMPv6" : "ICMP";
-    }, pkt.l4);
+    if      (std::holds_alternative<Ipv4>(pkt.l3)) proto = "IPv4";
+    else if (std::holds_alternative<Ipv6>(pkt.l3)) proto = "IPv6";
+    else if (std::holds_alternative<Arp>(pkt.l3))  { proto = "ARP"; is_arp = true; }
+    if      (std::holds_alternative<Tcp>(pkt.l4)) proto = "TCP";
+    else if (std::holds_alternative<Udp>(pkt.l4)) proto = "UDP";
+    else if (auto* c = std::get_if<Icmp>(&pkt.l4)) proto = c->v6 ? "ICMPv6" : "ICMP";
 
     // Protocol cell — coloured by OSI layer (L2 yellow, L3 blue, L4 green)
     // and left-aligned. The column width covers "ICMPv6" exactly; shorter
@@ -108,16 +102,13 @@ void render_table_row(const DecodedPacket& pkt,
     bool has_tcp_flags = false;
     std::optional<std::uint16_t> tcp_window;
 
-    std::visit([&](const auto& l4) {
-        using T = std::decay_t<decltype(l4)>;
-        if constexpr (std::is_same_v<T, Tcp>) {
-            sport = l4.sport; dport = l4.dport; has_ports = true;
-            tcp_flags = l4.flags; has_tcp_flags = true;
-            tcp_window = l4.window;
-        } else if constexpr (std::is_same_v<T, Udp>) {
-            sport = l4.sport; dport = l4.dport; has_ports = true;
-        }
-    }, pkt.l4);
+    if (auto* t = std::get_if<Tcp>(&pkt.l4)) {
+        sport = t->sport; dport = t->dport; has_ports = true;
+        tcp_flags = t->flags; has_tcp_flags = true;
+        tcp_window = t->window;
+    } else if (auto* u = std::get_if<Udp>(&pkt.l4)) {
+        sport = u->sport; dport = u->dport; has_ports = true;
+    }
 
     if (is_arp) {
         const auto& a = std::get<Arp>(pkt.l3);
@@ -128,17 +119,14 @@ void render_table_row(const DecodedPacket& pkt,
         dst_ep = format_mac(pkt.ethernet->dst);
     } else {
         std::string l3_src, l3_dst;
-        std::visit([&](const auto& l3) {
-            using T = std::decay_t<decltype(l3)>;
-            if constexpr (std::is_same_v<T, Ipv4>) {
-                l3_src = format_ipv4(l3.src);
-                l3_dst = format_ipv4(l3.dst);
-            } else if constexpr (std::is_same_v<T, Ipv6>) {
-                l3_src = format_ipv6(l3.src);
-                l3_dst = format_ipv6(l3.dst);
-                is_ipv6 = true;
-            }
-        }, pkt.l3);
+        if (auto* v4 = std::get_if<Ipv4>(&pkt.l3)) {
+            l3_src = format_ipv4(v4->src);
+            l3_dst = format_ipv4(v4->dst);
+        } else if (auto* v6 = std::get_if<Ipv6>(&pkt.l3)) {
+            l3_src = format_ipv6(v6->src);
+            l3_dst = format_ipv6(v6->dst);
+            is_ipv6 = true;
+        }
         src_ep = build_endpoint(l3_src, is_ipv6, has_ports, sport);
         dst_ep = build_endpoint(l3_dst, is_ipv6, has_ports, dport);
     }
@@ -248,56 +236,50 @@ public:
                 << " dei=" << (v.dei ? 1 : 0)
                 << " inner_ethertype=" << inbuf << '\n';
         }
-        std::visit([&](const auto& l3) {
-            using T = std::decay_t<decltype(l3)>;
-            if constexpr (std::is_same_v<T, Ipv4>) {
-                write_label(out, pal_, "ipv4:");
-                out << pal_.address << format_ipv4(l3.src) << pal_.reset
-                    << " -> "
-                    << pal_.address << format_ipv4(l3.dst) << pal_.reset
-                    << " proto=" << static_cast<int>(l3.proto)
-                    << " ttl=" << static_cast<int>(l3.ttl)
-                    << " total=" << l3.total_length << '\n';
-            } else if constexpr (std::is_same_v<T, Ipv6>) {
-                write_label(out, pal_, "ipv6:");
-                out << pal_.address << format_ipv6(l3.src) << pal_.reset
-                    << " -> "
-                    << pal_.address << format_ipv6(l3.dst) << pal_.reset
-                    << " next=" << static_cast<int>(l3.next_header)
-                    << " hlim=" << static_cast<int>(l3.hop_limit)
-                    << " plen=" << l3.payload_length << '\n';
-            } else if constexpr (std::is_same_v<T, Arp>) {
-                write_label(out, pal_, "arp:");
-                out << "op=" << l3.op
-                    << " sha=" << pal_.address << format_mac(l3.sha) << pal_.reset
-                    << " spa=" << pal_.address << format_ipv4(l3.spa) << pal_.reset
-                    << " tha=" << pal_.address << format_mac(l3.tha) << pal_.reset
-                    << " tpa=" << pal_.address << format_ipv4(l3.tpa) << pal_.reset
-                    << '\n';
-            }
-        }, pkt.l3);
-        std::visit([&](const auto& l4) {
-            using T = std::decay_t<decltype(l4)>;
-            if constexpr (std::is_same_v<T, Tcp>) {
-                char fbuf[16];
-                tcp_flags_str(l4.flags, fbuf, sizeof fbuf);
-                write_label(out, pal_, "tcp:");
-                out << pal_.address << l4.sport << pal_.reset << " -> "
-                    << pal_.address << l4.dport << pal_.reset
-                    << " seq=" << l4.seq << " ack=" << l4.ack
-                    << " flags=" << pal_.metadata << fbuf << pal_.reset
-                    << " win=" << l4.window << '\n';
-            } else if constexpr (std::is_same_v<T, Udp>) {
-                write_label(out, pal_, "udp:");
-                out << pal_.address << l4.sport << pal_.reset << " -> "
-                    << pal_.address << l4.dport << pal_.reset
-                    << " len=" << l4.length << '\n';
-            } else if constexpr (std::is_same_v<T, Icmp>) {
-                write_label(out, pal_, l4.v6 ? "icmpv6:" : "icmp:");
-                out << "type=" << static_cast<int>(l4.type)
-                    << " code=" << static_cast<int>(l4.code) << '\n';
-            }
-        }, pkt.l4);
+        if (auto* v4 = std::get_if<Ipv4>(&pkt.l3)) {
+            write_label(out, pal_, "ipv4:");
+            out << pal_.address << format_ipv4(v4->src) << pal_.reset
+                << " -> "
+                << pal_.address << format_ipv4(v4->dst) << pal_.reset
+                << " proto=" << static_cast<int>(v4->proto)
+                << " ttl=" << static_cast<int>(v4->ttl)
+                << " total=" << v4->total_length << '\n';
+        } else if (auto* v6 = std::get_if<Ipv6>(&pkt.l3)) {
+            write_label(out, pal_, "ipv6:");
+            out << pal_.address << format_ipv6(v6->src) << pal_.reset
+                << " -> "
+                << pal_.address << format_ipv6(v6->dst) << pal_.reset
+                << " next=" << static_cast<int>(v6->next_header)
+                << " hlim=" << static_cast<int>(v6->hop_limit)
+                << " plen=" << v6->payload_length << '\n';
+        } else if (auto* ar = std::get_if<Arp>(&pkt.l3)) {
+            write_label(out, pal_, "arp:");
+            out << "op=" << ar->op
+                << " sha=" << pal_.address << format_mac(ar->sha) << pal_.reset
+                << " spa=" << pal_.address << format_ipv4(ar->spa) << pal_.reset
+                << " tha=" << pal_.address << format_mac(ar->tha) << pal_.reset
+                << " tpa=" << pal_.address << format_ipv4(ar->tpa) << pal_.reset
+                << '\n';
+        }
+        if (auto* t = std::get_if<Tcp>(&pkt.l4)) {
+            char fbuf[16];
+            tcp_flags_str(t->flags, fbuf, sizeof fbuf);
+            write_label(out, pal_, "tcp:");
+            out << pal_.address << t->sport << pal_.reset << " -> "
+                << pal_.address << t->dport << pal_.reset
+                << " seq=" << t->seq << " ack=" << t->ack
+                << " flags=" << pal_.metadata << fbuf << pal_.reset
+                << " win=" << t->window << '\n';
+        } else if (auto* u = std::get_if<Udp>(&pkt.l4)) {
+            write_label(out, pal_, "udp:");
+            out << pal_.address << u->sport << pal_.reset << " -> "
+                << pal_.address << u->dport << pal_.reset
+                << " len=" << u->length << '\n';
+        } else if (auto* c = std::get_if<Icmp>(&pkt.l4)) {
+            write_label(out, pal_, c->v6 ? "icmpv6:" : "icmp:");
+            out << "type=" << static_cast<int>(c->type)
+                << " code=" << static_cast<int>(c->code) << '\n';
+        }
         for (const auto& n : pkt.notes) {
             write_label(out, pal_, "note:");
             out << n << '\n';
@@ -316,39 +298,33 @@ private:
         const auto& e = *pkt.ethernet;
         out << pal.address << format_mac(e.src) << pal.reset
             << " > " << pal.address << format_mac(e.dst) << pal.reset;
-        std::visit([&](const auto& l3) {
-            using T = std::decay_t<decltype(l3)>;
-            if constexpr (std::is_same_v<T, Ipv4>) {
-                out << " " << pal.address << format_ipv4(l3.src) << pal.reset
-                    << " > " << pal.address << format_ipv4(l3.dst) << pal.reset
-                    << " ttl=" << static_cast<int>(l3.ttl);
-            } else if constexpr (std::is_same_v<T, Ipv6>) {
-                out << " " << pal.address << format_ipv6(l3.src) << pal.reset
-                    << " > " << pal.address << format_ipv6(l3.dst) << pal.reset
-                    << " hlim=" << static_cast<int>(l3.hop_limit);
-            } else if constexpr (std::is_same_v<T, Arp>) {
-                out << " ARP "
-                    << (l3.op == 1 ? "request" : l3.op == 2 ? "reply" : "op?")
-                    << " who-has " << pal.address << format_ipv4(l3.tpa) << pal.reset
-                    << " tell "    << pal.address << format_ipv4(l3.spa) << pal.reset;
-            }
-        }, pkt.l3);
-        std::visit([&](const auto& l4) {
-            using T = std::decay_t<decltype(l4)>;
-            if constexpr (std::is_same_v<T, Tcp>) {
-                char fbuf[16];
-                tcp_flags_str(l4.flags, fbuf, sizeof fbuf);
-                out << " TCP " << l4.sport << " > " << l4.dport
-                    << " [" << fbuf << "] win=" << l4.window;
-            } else if constexpr (std::is_same_v<T, Udp>) {
-                out << " UDP " << l4.sport << " > " << l4.dport
-                    << " len=" << l4.length;
-            } else if constexpr (std::is_same_v<T, Icmp>) {
-                out << (l4.v6 ? " ICMPv6" : " ICMP")
-                    << " type=" << static_cast<int>(l4.type)
-                    << " code=" << static_cast<int>(l4.code);
-            }
-        }, pkt.l4);
+        if (auto* v4 = std::get_if<Ipv4>(&pkt.l3)) {
+            out << " " << pal.address << format_ipv4(v4->src) << pal.reset
+                << " > " << pal.address << format_ipv4(v4->dst) << pal.reset
+                << " ttl=" << static_cast<int>(v4->ttl);
+        } else if (auto* v6 = std::get_if<Ipv6>(&pkt.l3)) {
+            out << " " << pal.address << format_ipv6(v6->src) << pal.reset
+                << " > " << pal.address << format_ipv6(v6->dst) << pal.reset
+                << " hlim=" << static_cast<int>(v6->hop_limit);
+        } else if (auto* ar = std::get_if<Arp>(&pkt.l3)) {
+            out << " ARP "
+                << (ar->op == 1 ? "request" : ar->op == 2 ? "reply" : "op?")
+                << " who-has " << pal.address << format_ipv4(ar->tpa) << pal.reset
+                << " tell "    << pal.address << format_ipv4(ar->spa) << pal.reset;
+        }
+        if (auto* t = std::get_if<Tcp>(&pkt.l4)) {
+            char fbuf[16];
+            tcp_flags_str(t->flags, fbuf, sizeof fbuf);
+            out << " TCP " << t->sport << " > " << t->dport
+                << " [" << fbuf << "] win=" << t->window;
+        } else if (auto* u = std::get_if<Udp>(&pkt.l4)) {
+            out << " UDP " << u->sport << " > " << u->dport
+                << " len=" << u->length;
+        } else if (auto* c = std::get_if<Icmp>(&pkt.l4)) {
+            out << (c->v6 ? " ICMPv6" : " ICMP")
+                << " type=" << static_cast<int>(c->type)
+                << " code=" << static_cast<int>(c->code);
+        }
         out << " caplen=" << pkt.captured_len;
         if (pkt.captured_len != pkt.original_len) {
             out << "/" << pkt.original_len;
