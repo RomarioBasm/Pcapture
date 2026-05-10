@@ -14,14 +14,6 @@
 
 ---
 
-## Quickstart
-
-```sh
-cmake -B build && cmake --build build -j
-sudo ./build/pcapture -i eth0 -c 10              # Linux/macOS, 10 frames
-.\build\Release\pcapture.exe -L                  # Windows, list interfaces
-```
-
 ## Overview
 
 Pcapture is a portable C++17 command-line sniffer that runs on **Linux, macOS,
